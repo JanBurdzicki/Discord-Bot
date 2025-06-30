@@ -1,353 +1,263 @@
 import discord
 from discord import app_commands
-from db.models import UserProfile, Poll, Vote, UserToken
-from datetime import datetime, timedelta
-import uuid
-import requests
+from handlers.reminder_commands import remind_command
+from handlers.stat_commands import stats_command
+from handlers.calendar_management import (
+    calendar_help_command, link_user_calendar_command, create_shared_calendar_command,
+    add_calendar_users_command, list_calendar_users_command, remove_calendar_users_command,
+    add_event_command, list_events_command, update_event_command, delete_event_command,
+    visualize_day_command
+)
+from handlers.calendar_commands import find_free_slots_command, reserve_slot_command
+from handlers.poll_commands import create_poll_command, create_advanced_poll_command, vote_poll_command, poll_results_command, list_polls_command, delete_poll_command
+from handlers.user_commands import add_user_command, update_roles_command, update_preferences_command
+
+from handlers.help_commands import help_command
+from handlers.role_management import (
+    create_role_command, delete_role_command, list_role_permissions_command,
+    add_role_permission_command, remove_role_permission_command, list_role_members_command,
+    add_user_to_role_command, remove_user_from_role_command, list_user_roles_command,
+    list_all_roles_command
+)
 
 # --- Autocomplete helpers ---
 async def command_autocomplete(interaction: discord.Interaction, current: str):
-    commands = ["help", "grant_permission", "update_roles", "update_preferences", "add_role", "add_users_to_role", "add_user", "list_events", "add_event", "remove_event", "update_event", "remind", "create_poll", "create_advanced_poll", "vote_poll", "poll_results", "list_polls", "delete_poll", "link_calendar", "delete_calendar_token", "update_calendar_token"]
+    commands = ["help", "update_roles", "update_preferences", "add_user", "remind", "create_poll", "create_advanced_poll", "vote_poll", "poll_results", "list_polls", "delete_poll", "create_role", "delete_role", "list_role_permissions", "add_role_permission", "remove_role_permission", "list_role_members", "add_user_to_role", "remove_user_from_role", "list_user_roles", "list_all_roles", "calendar_help", "link_user_calendar", "create_shared_calendar", "add_calendar_users", "list_calendar_users", "remove_calendar_users", "add_event", "list_events", "update_event", "delete_event", "visualize_day", "find_free_slots", "reserve_slot", "sync_commands"]
     return [app_commands.Choice(name=cmd, value=cmd) for cmd in commands if current.lower() in cmd.lower()]
 
 async def role_autocomplete(interaction: discord.Interaction, current: str):
     roles = [role.name for role in interaction.guild.roles]
     return [app_commands.Choice(name=role, value=role) for role in roles if current.lower() in role.lower()]
 
-# --- Google Calendar OAuth2 Placeholders ---
-OAUTH2_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-CLIENT_ID = "YOUR_CLIENT_ID"
-REDIRECT_URI = "YOUR_REDIRECT_URI"
-SCOPES = "https://www.googleapis.com/auth/calendar"
 
 # --- Slash Commands Registration ---
 def register_all_commands(bot):
     tree = bot.tree
 
     @tree.command(name="help", description="Show all bot commands")
-    async def help_command(interaction: discord.Interaction):
-        commands = [
-            "/grant_permission <role> <command>",
-            "/update_roles <@user> <role1,role2,...>",
-            "/update_preferences <key> <value>",
-            "/add_role <role> <command1,command2,...>",
-            "/add_users_to_role <role> <@user1> <@user2> ...",
-            "/add_user <@user> <email>",
-            "/list_events [days]",
-            "/add_event <title> <start> <end>",
-            "/remove_event <event_id>",
-            "/update_event <event_id> <title> <start> <end>",
-            "/remind",
-            "/link_calendar",
-            "/delete_calendar_token",
-            "/update_calendar_token",
-            "/create_poll <question> <options> <duration>",
-            "/create_advanced_poll <question> <options> <multi>",
-            "/vote_poll <poll_id> <option_index>",
-            "/poll_results <poll_id>",
-            "/list_polls",
-            "/delete_poll <poll_id>",
-            "/stats",
-        ]
-        embed = discord.Embed(title="Available Commands", description="\n".join(commands), color=discord.Color.blue())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    async def help_slash(interaction: discord.Interaction):
+        await help_command(interaction)
 
-    @tree.command(name="grant_permission", description="Grant a command to a role")
-    @app_commands.describe(role="Role to grant", command="Command to grant")
-    @app_commands.autocomplete(command=command_autocomplete, role=role_autocomplete)
-    async def grant_permission_command(interaction: discord.Interaction, role: str, command: str):
-        if interaction.user.id != bot.owner_id:
-            embed = discord.Embed(title="Permission Denied", description="Only the server owner can grant permissions.", color=discord.Color.red())
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-        bot.permission_manager.grant_permission(role, command)
-        embed = discord.Embed(title="Success", description=f"Granted permission for {role} to run {command}.", color=discord.Color.green())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    @tree.command(name="stats", description="Show voting and poll stats")
+    async def stats_slash(interaction: discord.Interaction):
+        await stats_command(interaction)
 
-    @tree.command(name="add_role", description="Create a new role and assign commands to it")
-    @app_commands.describe(role="Role name", commands="Comma-separated commands")
-    async def add_role_command(interaction: discord.Interaction, role: str, commands: str):
-        if interaction.user.id != bot.owner_id:
-            embed = discord.Embed(title="Permission Denied", description="Only the server owner can add roles.", color=discord.Color.red())
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-        guild = interaction.guild
-        discord_role = discord.utils.get(guild.roles, name=role)
-        if not discord_role:
-            discord_role = await guild.create_role(name=role, reason="Created by bot command")
-        bot.permission_manager.add_role(role, commands.split(","))
-        embed = discord.Embed(title="Role Created", description=f"Role '{role}' created with commands: {commands}", color=discord.Color.green())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @tree.command(name="add_users_to_role", description="Add users to a role")
-    @app_commands.describe(role="Role name", users="Users to add")
-    @app_commands.autocomplete(role=role_autocomplete)
-    async def add_users_to_role_command(interaction: discord.Interaction, role: str, users: str):
-        if interaction.user.id != bot.owner_id:
-            embed = discord.Embed(title="Permission Denied", description="Only the server owner can add users to roles.", color=discord.Color.red())
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-        guild = interaction.guild
-        discord_role = discord.utils.get(guild.roles, name=role)
-        if not discord_role:
-            discord_role = await guild.create_role(name=role, reason="Created by bot command")
-        mentions = [m for m in interaction.guild.members if f"@{m.display_name}" in users or f"@{m.name}" in users]
-        for user in mentions:
-            user_profile = bot.user_manager.get_user(user.id)
-            if not user_profile:
-                user_profile = bot.user_manager.ensure_user(user.id)
-            bot.permission_manager.add_user_to_role(user_profile, role)
-            if discord_role not in user.roles:
-                await user.add_roles(discord_role, reason="Added by bot command")
-        embed = discord.Embed(title="Users Added to Role", description=f"Added {len(mentions)} users to role '{role}'.", color=discord.Color.green())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @tree.command(name="add_user", description="Add a user with email")
-    @app_commands.describe(user="User to add", email="User's email")
-    async def add_user_command(interaction: discord.Interaction, user: discord.Member, email: str):
-        try:
-            bot.user_manager.ensure_user(user.id, calendar_email=email)
-            embed = discord.Embed(title="Success", description=f"Added user <@{user.id}> with email {email}.", color=discord.Color.green())
-        except Exception as e:
-            embed = discord.Embed(title="Error", description=str(e), color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
+    # User management commands
     @tree.command(name="update_roles", description="Update roles for a user")
     @app_commands.describe(user="User to update", roles="Comma-separated roles")
-    async def update_roles_command(interaction: discord.Interaction, user: discord.Member, roles: str):
-        try:
-            bot.user_manager.update_roles(user.id, roles.split(","))
-            embed = discord.Embed(title="Success", description=f"Updated roles for <@{user.id}>: {roles}", color=discord.Color.green())
-        except Exception as e:
-            embed = discord.Embed(title="Error", description=str(e), color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    async def update_roles_slash(interaction: discord.Interaction, user: discord.Member, roles: str):
+        await update_roles_command(interaction, user, roles)
 
     @tree.command(name="update_preferences", description="Update your preferences")
     @app_commands.describe(key="Preference key", value="Preference value")
-    async def update_preferences_command(interaction: discord.Interaction, key: str, value: str):
-        try:
-            bot.user_manager.update_preferences(interaction.user.id, {key: value})
-            embed = discord.Embed(title="Success", description=f"Updated your preferences: {key} = {value}", color=discord.Color.green())
-        except Exception as e:
-            embed = discord.Embed(title="Error", description=str(e), color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    async def update_preferences_slash(interaction: discord.Interaction, key: str, value: str):
+        await update_preferences_command(interaction, key, value)
 
-    @tree.command(name="list_events", description="List calendar events")
-    @app_commands.describe(days="Number of days to look ahead")
-    async def list_events_command(interaction: discord.Interaction, days: int = 7):
-        calendar_service = bot.calendar_service
-        now = datetime.utcnow()
-        time_min = now
-        time_max = now + timedelta(days=days)
-        try:
-            events = calendar_service.list_events(time_min=time_min, time_max=time_max)
-            if not events:
-                embed = discord.Embed(title="No Events", description=f"No events found in the next {days} days.", color=discord.Color.orange())
-            else:
-                lines = [f"{e.event_id}: {e.title} ({e.start_time} - {e.end_time})" for e in events]
-                embed = discord.Embed(title="Upcoming Events", description="\n".join(lines), color=discord.Color.blue())
-        except Exception as e:
-            embed = discord.Embed(title="Error", description=str(e), color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    @tree.command(name="add_user", description="Add a user with email")
+    @app_commands.describe(user="User to add", email="User's email")
+    async def add_user_slash(interaction: discord.Interaction, user: discord.Member, email: str):
+        await add_user_command(interaction, user, email)
 
-    @tree.command(name="add_event", description="Add a calendar event")
-    @app_commands.describe(title="Event title", start="Start time (YYYY-MM-DDTHH:MM)", end="End time (YYYY-MM-DDTHH:MM)")
-    async def add_event_command(interaction: discord.Interaction, title: str, start: str, end: str):
-        try:
-            start_dt = datetime.fromisoformat(start)
-            end_dt = datetime.fromisoformat(end)
-            bot.calendar_service.add_event(
-                bot.calendar_service.__class__.__bases__[0].__name__ == 'object' and None or None,  # placeholder
-                title=title, start_time=start_dt, end_time=end_dt
-            )
-            embed = discord.Embed(title="Success", description=f"Event '{title}' added.", color=discord.Color.green())
-        except Exception as e:
-            embed = discord.Embed(title="Error", description=str(e), color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @tree.command(name="remove_event", description="Remove a calendar event")
-    @app_commands.describe(event_id="Event ID")
-    async def remove_event_command(interaction: discord.Interaction, event_id: str):
-        try:
-            success = bot.calendar_service.remove_event(event_id)
-            if success:
-                embed = discord.Embed(title="Success", description=f"Event {event_id} removed.", color=discord.Color.green())
-            else:
-                embed = discord.Embed(title="Failed", description=f"Event {event_id} not found.", color=discord.Color.red())
-        except Exception as e:
-            embed = discord.Embed(title="Error", description=str(e), color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @tree.command(name="update_event", description="Update a calendar event")
-    @app_commands.describe(event_id="Event ID", title="Event title", start="Start time (YYYY-MM-DDTHH:MM)", end="End time (YYYY-MM-DDTHH:MM)")
-    async def update_event_command(interaction: discord.Interaction, event_id: str, title: str, start: str, end: str):
-        try:
-            start_dt = datetime.fromisoformat(start)
-            end_dt = datetime.fromisoformat(end)
-            success = bot.calendar_service.update_event(
-                bot.calendar_service.__class__.__bases__[0].__name__ == 'object' and None or None,  # placeholder
-                calendar_id='primary'
-            )
-            if success:
-                embed = discord.Embed(title="Success", description=f"Event {event_id} updated.", color=discord.Color.green())
-            else:
-                embed = discord.Embed(title="Failed", description=f"Event {event_id} not found.", color=discord.Color.red())
-        except Exception as e:
-            embed = discord.Embed(title="Error", description=str(e), color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
+    # Reminder command
     @tree.command(name="remind", description="Set a reminder for yourself in 10 seconds")
-    async def remind_command(interaction: discord.Interaction):
-        async def send_reminder():
-            await interaction.followup.send(f"Reminder for {interaction.user.mention}!", ephemeral=True)
-        run_time = datetime.now() + timedelta(seconds=10)
-        def job_wrapper():
-            bot.loop.create_task(send_reminder())
-        bot.reminder_scheduler.schedule(job_wrapper, run_time)
-        embed = discord.Embed(title="Reminder Set", description="Reminder set for 10 seconds from now!", color=discord.Color.green())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    async def remind_slash(interaction: discord.Interaction):
+        await remind_command(interaction)
 
-    @tree.command(name="link_calendar", description="Link your Google Calendar account")
-    async def link_calendar_command(interaction: discord.Interaction):
-        # Generate a unique state for the user
-        state = str(uuid.uuid4())
-        # Build the OAuth2 URL (placeholder)
-        url = f"{OAUTH2_URL}?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope={SCOPES}&access_type=offline&state={state}"
-        try:
-            await interaction.user.send(f"Click this link to link your Google Calendar: {url}")
-            embed = discord.Embed(title="Check your DMs!", description="A link to link your Google Calendar has been sent.", color=discord.Color.green())
-        except Exception:
-            embed = discord.Embed(title="Error", description="Could not send DM. Please enable DMs from server members.", color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    # Calendar Management Commands
+    @tree.command(name="calendar_help", description="Show calendar setup instructions")
+    async def calendar_help_slash(interaction: discord.Interaction):
+        await calendar_help_command(interaction)
 
-    @tree.command(name="delete_calendar_token", description="Delete your Google Calendar token")
-    async def delete_calendar_token_command(interaction: discord.Interaction):
-        user_id = interaction.user.id
-        if hasattr(bot, 'user_tokens') and user_id in bot.user_tokens:
-            del bot.user_tokens[user_id]
-            embed = discord.Embed(title="Token Deleted", description="Your Google Calendar token has been deleted.", color=discord.Color.green())
-        else:
-            embed = discord.Embed(title="No Token", description="No Google Calendar token found.", color=discord.Color.orange())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    @tree.command(name="link_user_calendar", description="Link your personal Google Calendar")
+    @app_commands.describe(calendar_id="Your Google Calendar ID (email format)")
+    async def link_user_calendar_slash(interaction: discord.Interaction, calendar_id: str = ""):
+        await link_user_calendar_command(interaction, calendar_id)
 
-    @tree.command(name="update_calendar_token", description="Update your Google Calendar token")
-    async def update_calendar_token_command(interaction: discord.Interaction):
-        # For demo, just call link_calendar again
-        await link_calendar_command(interaction)
+    @tree.command(name="create_shared_calendar", description="Create a shared calendar (Admin only)")
+    @app_commands.describe(calendar_name="Name of the calendar", description="Optional description")
+    async def create_shared_calendar_slash(interaction: discord.Interaction, calendar_name: str, description: str = ""):
+        await create_shared_calendar_command(interaction, calendar_name, description)
 
-    # --- Simple Polls ---
-    if not hasattr(bot, 'polls'):
-        bot.polls = {}
-    if not hasattr(bot, 'user_tokens'):
-        bot.user_tokens = {}
+    @tree.command(name="add_calendar_users", description="Add users to shared calendar (Admin only)")
+    @app_commands.describe(calendar_name="Calendar name", permission="Permission level (reader/writer/owner)", roles="Comma-separated roles", users="Comma-separated users")
+    async def add_calendar_users_slash(interaction: discord.Interaction, calendar_name: str, permission: str, roles: str = "", users: str = ""):
+        await add_calendar_users_command(interaction, calendar_name, permission, roles, users)
 
+    @tree.command(name="list_calendar_users", description="List users with access to a calendar")
+    @app_commands.describe(calendar_name="Calendar name")
+    async def list_calendar_users_slash(interaction: discord.Interaction, calendar_name: str):
+        await list_calendar_users_command(interaction, calendar_name)
+
+    @tree.command(name="remove_calendar_users", description="Remove users from shared calendar (Admin only)")
+    @app_commands.describe(calendar_name="Calendar name", roles="Comma-separated roles", users="Comma-separated users")
+    async def remove_calendar_users_slash(interaction: discord.Interaction, calendar_name: str, roles: str = "", users: str = ""):
+        await remove_calendar_users_command(interaction, calendar_name, roles, users)
+
+    # Event Management Commands
+    @tree.command(name="add_event", description="Add event to shared calendar")
+    @app_commands.describe(calendar_name="Calendar name", event_name="Event name", start_time="Start (YYYY-MM-DD HH:MM)", end_time="End (YYYY-MM-DD HH:MM)", location="Location (optional)", description="Description (optional)", roles="Roles to assign (optional)")
+    async def add_event_slash(interaction: discord.Interaction, calendar_name: str, event_name: str, start_time: str, end_time: str, location: str = "", description: str = "", roles: str = ""):
+        await add_event_command(interaction, calendar_name, event_name, start_time, end_time, location, description, roles)
+
+    @tree.command(name="list_events", description="List events in a calendar")
+    @app_commands.describe(calendar_name="Calendar name", days_ahead="Days to look ahead")
+    async def list_events_slash(interaction: discord.Interaction, calendar_name: str, days_ahead: int = 7):
+        await list_events_command(interaction, calendar_name, days_ahead)
+
+    @tree.command(name="update_event", description="Update an existing event")
+    @app_commands.describe(calendar_name="Calendar name", event_id="Event ID", event_name="New name (optional)", start_time="New start (optional)", end_time="New end (optional)", location="New location (optional)", description="New description (optional)")
+    async def update_event_slash(interaction: discord.Interaction, calendar_name: str, event_id: str, event_name: str = "", start_time: str = "", end_time: str = "", location: str = "", description: str = ""):
+        await update_event_command(interaction, calendar_name, event_id, event_name, start_time, end_time, location, description)
+
+    @tree.command(name="delete_event", description="Delete an event from calendar")
+    @app_commands.describe(calendar_name="Calendar name", event_id="Event ID")
+    async def delete_event_slash(interaction: discord.Interaction, calendar_name: str, event_id: str):
+        await delete_event_command(interaction, calendar_name, event_id)
+
+    @tree.command(name="visualize_day", description="Visualize a day with events")
+    @app_commands.describe(calendar_name="Calendar name", date="Date (YYYY-MM-DD)", start_hour="Start hour (0-23)", end_hour="End hour (0-23)")
+    async def visualize_day_slash(interaction: discord.Interaction, calendar_name: str, date: str, start_hour: int = 8, end_hour: int = 18):
+        await visualize_day_command(interaction, calendar_name, date, start_hour, end_hour)
+
+    # Poll commands
     @tree.command(name="create_poll", description="Create a simple poll (reactions)")
     @app_commands.describe(question="Poll question", options="Comma-separated options", duration="Duration in minutes")
-    async def create_poll_command(interaction: discord.Interaction, question: str, options: str, duration: int = 5):
-        poll_id = str(uuid.uuid4())
-        opts = [opt.strip() for opt in options.split(",") if opt.strip()]
-        poll = Poll(poll_id, question, opts, interaction.user.id)
-        bot.polls[poll_id] = poll
-        bot.stats_module.log_poll_creation(interaction.user.id, poll_id)
-        embed = discord.Embed(title="Poll Created", description=question, color=discord.Color.blue())
-        for idx, opt in enumerate(opts):
-            embed.add_field(name=f"{chr(0x1F1E6+idx)}", value=opt, inline=False)
-        msg = await interaction.channel.send(embed=embed)
-        for idx in range(len(opts)):
-            await msg.add_reaction(chr(0x1F1E6+idx))
-        embed2 = discord.Embed(title="Poll Active!", description=f"Poll ID: {poll_id}\nVote by reacting below! Ends in {duration} minutes.", color=discord.Color.green())
-        await interaction.response.send_message(embed=embed2, ephemeral=True)
-        # Schedule poll close (not persistent across restarts)
-        async def close_poll():
-            await discord.utils.sleep_until(datetime.utcnow() + timedelta(minutes=duration))
-            poll.active = False
-            await interaction.channel.send(f"Poll {poll_id} closed!")
-        bot.loop.create_task(close_poll())
+    async def create_poll_slash(interaction: discord.Interaction, question: str, options: str, duration: int = 60):
+        await create_poll_command(interaction, question, options, duration)
 
-    # --- Advanced Polls (StrawPoll API) ---
     @tree.command(name="create_advanced_poll", description="Create an advanced poll (StrawPoll)")
     @app_commands.describe(question="Poll question", options="Comma-separated options", multi="Allow multiple answers?")
-    async def create_advanced_poll_command(interaction: discord.Interaction, question: str, options: str, multi: bool = False):
-        opts = [opt.strip() for opt in options.split(",") if opt.strip()]
-        # StrawPoll API (placeholder, no API key required for demo)
-        data = {"title": question, "options": opts, "multi": multi}
-        resp = requests.post("https://strawpoll.com/api/poll", json=data)
-        if resp.status_code == 200:
-            poll_data = resp.json()
-            poll_id = poll_data.get("id")
-            url = poll_data.get("url", f"https://strawpoll.com/{poll_id}")
-            poll = Poll(poll_id, question, opts, interaction.user.id, is_advanced=True, external_id=poll_id)
-            bot.polls[poll_id] = poll
-            bot.stats_module.log_poll_creation(interaction.user.id, poll_id)
-            embed = discord.Embed(title="Advanced Poll Created", description=f"[Vote here]({url})", color=discord.Color.purple())
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-        else:
-            embed = discord.Embed(title="Error", description="Failed to create StrawPoll.", color=discord.Color.red())
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+    async def create_advanced_poll_slash(interaction: discord.Interaction, question: str, options: str, multi: bool = False):
+        await create_advanced_poll_command(interaction, question, options, multi)
 
-    @tree.command(name="vote_poll", description="Vote in a simple poll")
-    @app_commands.describe(poll_id="Poll ID", option_index="Option number (starting from 1)")
-    async def vote_poll_command(interaction: discord.Interaction, poll_id: str, option_index: int):
-        poll = bot.polls.get(poll_id)
-        if not poll or not poll.active:
-            embed = discord.Embed(title="Error", description="Poll not found or closed.", color=discord.Color.red())
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-        poll.votes[interaction.user.id] = option_index - 1
-        vote = Vote(poll_id, interaction.user.id, option_index - 1, datetime.utcnow())
-        bot.stats_module.log_vote(vote)
-        embed = discord.Embed(title="Vote Registered", description=f"You voted for option {option_index} in poll {poll_id}.", color=discord.Color.green())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    @tree.command(name="vote_poll", description="Vote in a poll")
+    @app_commands.describe(poll_id="Poll ID", option_indexes="Option number(s) - single: '2' or multiple: '1,3,5'")
+    async def vote_poll_slash(interaction: discord.Interaction, poll_id: str, option_indexes: str):
+        await vote_poll_command(interaction, poll_id, option_indexes)
 
     @tree.command(name="poll_results", description="Show poll results with visualization")
     @app_commands.describe(poll_id="Poll ID")
-    async def poll_results_command(interaction: discord.Interaction, poll_id: str):
-        poll = bot.polls.get(poll_id)
-        if not poll:
-            embed = discord.Embed(title="Error", description="Poll not found.", color=discord.Color.red())
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-        # Count votes
-        counts = [0] * len(poll.options)
-        for v in poll.votes.values():
-            if 0 <= v < len(counts):
-                counts[v] += 1
-        # Visualization with QuickChart
-        chart_url = f"https://quickchart.io/chart?c={{type:'bar',data:{{labels:{poll.options},datasets:[{{label:'Votes',data:{counts}}}]}}}}"
-        embed = discord.Embed(title="Poll Results", description=poll.question, color=discord.Color.blue())
-        for idx, opt in enumerate(poll.options):
-            embed.add_field(name=opt, value=f"{counts[idx]} votes", inline=False)
-        embed.set_image(url=chart_url)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    async def poll_results_slash(interaction: discord.Interaction, poll_id: str):
+        await poll_results_command(interaction, poll_id)
 
     @tree.command(name="list_polls", description="List all active polls")
-    async def list_polls_command(interaction: discord.Interaction):
-        active_polls = [p for p in bot.polls.values() if p.active]
-        if not active_polls:
-            embed = discord.Embed(title="No Active Polls", color=discord.Color.orange())
-        else:
-            desc = "\n".join([f"ID: {p.poll_id} | Q: {p.question}" for p in active_polls])
-            embed = discord.Embed(title="Active Polls", description=desc, color=discord.Color.blue())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    async def list_polls_slash(interaction: discord.Interaction):
+        await list_polls_command(interaction)
 
     @tree.command(name="delete_poll", description="Delete a poll")
     @app_commands.describe(poll_id="Poll ID")
-    async def delete_poll_command(interaction: discord.Interaction, poll_id: str):
-        poll = bot.polls.get(poll_id)
-        if not poll:
-            embed = discord.Embed(title="Error", description="Poll not found.", color=discord.Color.red())
-        elif poll.creator_id != interaction.user.id and interaction.user.id != bot.owner_id:
-            embed = discord.Embed(title="Permission Denied", description="Only the poll creator or server owner can delete this poll.", color=discord.Color.red())
-        else:
-            del bot.polls[poll_id]
-            embed = discord.Embed(title="Poll Deleted", description=f"Poll {poll_id} deleted.", color=discord.Color.green())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    async def delete_poll_slash(interaction: discord.Interaction, poll_id: str):
+        await delete_poll_command(interaction, poll_id)
 
-    @tree.command(name="stats", description="Show voting and poll stats")
-    async def stats_command(interaction: discord.Interaction):
-        stats = bot.stats_module.get_stats_summary()
-        desc = f"Total Votes: {stats['total_votes']}\nTotal Polls: {stats['total_polls']}\n"
-        desc += "Top Voters:\n" + "\n".join([f"<@{uid}>: {count}" for uid, count in stats['top_voters']])
-        desc += "\nTop Poll Creators:\n" + "\n".join([f"<@{uid}>: {count}" for uid, count in stats['top_poll_creators']])
-        embed = discord.Embed(title="Stats", description=desc, color=discord.Color.gold())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    # Role Management Commands
+    @tree.command(name="create_role", description="Create a new role with optional commands (Owner only)")
+    @app_commands.describe(role_name="Name of the role to create", commands="Comma-separated commands (optional)")
+    async def create_role_slash(interaction: discord.Interaction, role_name: str, commands: str = ""):
+        await create_role_command(interaction, role_name, commands)
+
+    @tree.command(name="delete_role", description="Delete a role and update all related data (Owner only)")
+    @app_commands.describe(role_name="Name of the role to delete")
+    @app_commands.autocomplete(role_name=role_autocomplete)
+    async def delete_role_slash(interaction: discord.Interaction, role_name: str):
+        await delete_role_command(interaction, role_name)
+
+    @tree.command(name="list_role_permissions", description="List permissions/commands for a specific role")
+    @app_commands.describe(role_name="Name of the role")
+    @app_commands.autocomplete(role_name=role_autocomplete)
+    async def list_role_permissions_slash(interaction: discord.Interaction, role_name: str):
+        await list_role_permissions_command(interaction, role_name)
+
+    @tree.command(name="add_role_permission", description="Add a command permission to a role (Owner only)")
+    @app_commands.describe(role_name="Name of the role", command="Command to allow")
+    @app_commands.autocomplete(role_name=role_autocomplete, command=command_autocomplete)
+    async def add_role_permission_slash(interaction: discord.Interaction, role_name: str, command: str):
+        await add_role_permission_command(interaction, role_name, command)
+
+    @tree.command(name="remove_role_permission", description="Remove a command permission from a role (Owner only)")
+    @app_commands.describe(role_name="Name of the role", command="Command to remove")
+    @app_commands.autocomplete(role_name=role_autocomplete, command=command_autocomplete)
+    async def remove_role_permission_slash(interaction: discord.Interaction, role_name: str, command: str):
+        await remove_role_permission_command(interaction, role_name, command)
+
+    @tree.command(name="list_role_members", description="List all people with a given role")
+    @app_commands.describe(role_name="Name of the role")
+    @app_commands.autocomplete(role_name=role_autocomplete)
+    async def list_role_members_slash(interaction: discord.Interaction, role_name: str):
+        await list_role_members_command(interaction, role_name)
+
+    @tree.command(name="add_user_to_role", description="Add a user to a specific role (Owner only)")
+    @app_commands.describe(user="User to add to role", role_name="Name of the role")
+    @app_commands.autocomplete(role_name=role_autocomplete)
+    async def add_user_to_role_slash(interaction: discord.Interaction, user: discord.Member, role_name: str):
+        await add_user_to_role_command(interaction, user, role_name)
+
+    @tree.command(name="remove_user_from_role", description="Remove a user from a specific role (Owner only)")
+    @app_commands.describe(user="User to remove from role", role_name="Name of the role")
+    @app_commands.autocomplete(role_name=role_autocomplete)
+    async def remove_user_from_role_slash(interaction: discord.Interaction, user: discord.Member, role_name: str):
+        await remove_user_from_role_command(interaction, user, role_name)
+
+    @tree.command(name="list_user_roles", description="List all roles for a specific user")
+    @app_commands.describe(user="User to check roles for")
+    async def list_user_roles_slash(interaction: discord.Interaction, user: discord.Member):
+        await list_user_roles_command(interaction, user)
+
+    @tree.command(name="list_all_roles", description="List all roles in the server with details")
+    async def list_all_roles_slash(interaction: discord.Interaction):
+        await list_all_roles_command(interaction)
+
+    # Free/Busy and Calendar Slot Commands
+    @tree.command(name="find_free_slots", description="Find free time slots in your calendar")
+    @app_commands.describe(start="Start date/time (YYYY-MM-DD HH:MM)", end="End date/time (YYYY-MM-DD HH:MM)", duration="Duration in minutes")
+    async def find_free_slots_slash(interaction: discord.Interaction, start: str, end: str, duration: int = 30):
+        await find_free_slots_command(interaction, start, end, duration)
+
+    @tree.command(name="reserve_slot", description="Reserve a time slot in your calendar")
+    @app_commands.describe(title="Event title", start="Start date/time (YYYY-MM-DD HH:MM)", end="End date/time (YYYY-MM-DD HH:MM)")
+    async def reserve_slot_slash(interaction: discord.Interaction, title: str, start: str, end: str):
+        await reserve_slot_command(interaction, title, start, end)
+
+    # Admin Commands
+    @tree.command(name="sync_commands", description="Manually sync bot commands with Discord (Owner only)")
+    @app_commands.describe(guild_only="Sync to current server only (faster for testing)")
+    async def sync_commands_slash(interaction: discord.Interaction, guild_only: bool = False):
+        # Only bot owner can sync commands
+        if interaction.user.id != bot.owner_id:
+            embed = discord.Embed(
+                title="❌ Permission Denied",
+                description="Only the bot owner can sync commands.",
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            if guild_only and interaction.guild:
+                synced_count = await bot.manual_sync_commands(interaction.guild.id)
+                embed = discord.Embed(
+                    title="✅ Commands Synced (Guild)",
+                    description=f"Successfully synced {synced_count} commands to this server.\n\nCommands should appear immediately in this server.",
+                    color=discord.Color.green()
+                )
+            else:
+                synced_count = await bot.manual_sync_commands()
+                embed = discord.Embed(
+                    title="✅ Commands Synced (Global)",
+                    description=f"Successfully synced {synced_count} commands globally.\n\n⚠️ It may take up to 1 hour for commands to appear in all servers.",
+                    color=discord.Color.green()
+                )
+
+            embed.add_field(name="📋 New Commands", value="• `/find_free_slots` - Find free time slots\n• `/reserve_slot` - Reserve calendar time\n• `/sync_commands` - This command", inline=False)
+
+        except Exception as e:
+            embed = discord.Embed(
+                title="❌ Sync Failed",
+                description=f"Failed to sync commands: {str(e)}",
+                color=discord.Color.red()
+            )
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
