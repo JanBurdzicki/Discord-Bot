@@ -2,3 +2,6 @@
 __pycache__/
 /venv/
 config/client_secret.json
+TODO/
+handlers/admin_commands.py
+api/
