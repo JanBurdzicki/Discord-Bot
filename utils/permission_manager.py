@@ -22,13 +22,28 @@ class PermissionManager:
         if command not in self.role_permissions[role]:
             self.role_permissions[role].append(command)
 
-    def revoke_permission(self, role: str, command: str) -> None:
+    def revoke_permission(self, role: str, command: str) -> bool:
         if role in self.role_permissions and command in self.role_permissions[role]:
             self.role_permissions[role].remove(command)
+            return True
+        return False
 
     def add_role(self, role: str, commands: list = None):
         if role not in self.role_permissions:
             self.role_permissions[role] = commands or []
+
+    def remove_role(self, role: str):
+        """Remove a role and all its permissions"""
+        if role in self.role_permissions:
+            del self.role_permissions[role]
+
+    def get_role_permissions(self, role: str) -> list:
+        """Get all permissions for a specific role"""
+        return self.role_permissions.get(role, [])
+
+    def get_all_roles(self) -> list:
+        """Get all roles"""
+        return list(self.role_permissions.keys())
 
     def add_user_to_role(self, user: UserProfile, role: str):
         if role not in user.roles:
