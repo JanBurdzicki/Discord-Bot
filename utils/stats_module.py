@@ -24,6 +24,9 @@ class StatsModule:
         self.poll_creations[user_id] += 1
         self.log_usage(user_id, 'create_poll', {'poll_id': poll_id})
 
+    def log_vote_action(self, user_id: int, poll_id: str):
+        self.log_usage(user_id, 'vote', {'poll_id': poll_id})
+
     def top_voters(self, n=5):
         count = defaultdict(int)
         for vote in self.votes:
