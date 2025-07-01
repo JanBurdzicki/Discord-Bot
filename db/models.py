@@ -119,3 +119,86 @@ class EventAttendee(Base):
 
     # Unique constraint to prevent duplicate attendees
     __table_args__ = (UniqueConstraint('event_id', 'user_id', name='unique_event_attendee'),)
+
+# Reminder System Models
+
+class ReminderTemplate(Base):
+    __tablename__ = "reminder_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    message_template = Column(Text, nullable=False)  # Template with placeholders like {poll_title}, {time_left}
+    priority = Column(String, nullable=False, default="informational")  # informational, urgent, very_urgent, critical
+    ping_roles = Column(JSON, default=[])  # List of role IDs to ping
+    ping_users = Column(JSON, default=[])  # List of user IDs to ping
+    embed_color = Column(String, default="#3498db")  # Hex color for embed
+    created_by = Column(BigInteger, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    reminders = relationship("Reminder", back_populates="template", cascade="all, delete-orphan")
+
+class Reminder(Base):
+    __tablename__ = "reminders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reminder_id = Column(String, unique=True, nullable=False)  # UUID for external reference
+    template_id = Column(Integer, ForeignKey("reminder_templates.id"), nullable=False)
+
+    # Target information
+    target_type = Column(String, nullable=False)  # 'poll', 'event', 'custom'
+    target_id = Column(String, nullable=True)  # Poll ID, Event ID, etc.
+    channel_id = Column(BigInteger, nullable=False)  # Discord channel to send reminder
+
+    # Scheduling information
+    trigger_type = Column(String, nullable=False)  # 'specific_time', 'time_before', 'interval'
+    trigger_time = Column(DateTime, nullable=True)  # For specific_time
+    time_before_minutes = Column(Integer, nullable=True)  # For time_before (e.g., 30 minutes before poll ends)
+    interval_minutes = Column(Integer, nullable=True)  # For interval reminders
+
+    # Status and metadata
+    is_active = Column(Boolean, default=True)
+    is_recurring = Column(Boolean, default=False)
+    max_occurrences = Column(Integer, nullable=True)  # Limit number of recurring reminders
+    occurrence_count = Column(Integer, default=0)
+    last_triggered = Column(DateTime, nullable=True)
+    next_trigger = Column(DateTime, nullable=True)
+
+    # Custom data for template rendering
+    custom_data = Column(JSON, default={})  # Additional data for message rendering
+
+    created_by = Column(BigInteger, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    template = relationship("ReminderTemplate", back_populates="reminders")
+    logs = relationship("ReminderLog", back_populates="reminder", cascade="all, delete-orphan")
+
+class ReminderLog(Base):
+    __tablename__ = "reminder_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reminder_id = Column(String, ForeignKey("reminders.reminder_id"), nullable=False)
+    triggered_at = Column(DateTime, nullable=False)
+    status = Column(String, nullable=False)  # 'sent', 'failed', 'skipped'
+    error_message = Column(Text, nullable=True)
+    message_content = Column(Text, nullable=True)  # The actual message that was sent
+    recipients = Column(JSON, default=[])  # List of user IDs who received the reminder
+
+    # Relationships
+    reminder = relationship("Reminder", back_populates="logs")
+
+class ReminderSubscription(Base):
+    __tablename__ = "reminder_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, nullable=False)
+    subscription_type = Column(String, nullable=False)  # 'poll_reminders', 'event_reminders', 'custom'
+    target_filter = Column(JSON, default={})  # Filters like poll types, event categories, etc.
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Unique constraint to prevent duplicate subscriptions
+    __table_args__ = (UniqueConstraint('user_id', 'subscription_type', name='unique_user_subscription'),)

@@ -1,6 +1,11 @@
 import discord
 from discord import app_commands
-from handlers.reminder_commands import remind_command
+from handlers.reminder_commands import (
+    create_reminder_template_command, list_reminder_templates_command,
+    set_poll_reminder_command, set_custom_reminder_command,
+    list_my_reminders_command, cancel_reminder_command, reminder_logs_command,
+    quick_poll_reminders_command
+)
 from handlers.stat_commands import stats_command
 from handlers.calendar_management import (
     calendar_help_command, link_user_calendar_command, create_shared_calendar_command,
@@ -10,7 +15,11 @@ from handlers.calendar_management import (
 )
 from handlers.calendar_commands import find_free_slots_command, reserve_slot_command
 from handlers.poll_commands import create_poll_command, create_advanced_poll_command, vote_poll_command, poll_results_command, list_polls_command, delete_poll_command
-from handlers.user_commands import add_user_command, update_roles_command, update_preferences_command
+from handlers.user_commands import (
+    update_roles_command, user_status_command, set_preference_command, get_preference_command, remove_preference_command,
+    list_preferences_command, clear_preferences_command, update_calendar_email_command,
+    manage_user_role_command, user_admin_info_command
+)
 
 from handlers.help_commands import help_command
 from handlers.role_management import (
@@ -22,7 +31,14 @@ from handlers.role_management import (
 
 # --- Autocomplete helpers ---
 async def command_autocomplete(interaction: discord.Interaction, current: str):
-    commands = ["help", "update_roles", "update_preferences", "add_user", "remind", "create_poll", "create_advanced_poll", "vote_poll", "poll_results", "list_polls", "delete_poll", "create_role", "delete_role", "list_role_permissions", "add_role_permission", "remove_role_permission", "list_role_members", "add_user_to_role", "remove_user_from_role", "list_user_roles", "list_all_roles", "calendar_help", "link_user_calendar", "create_shared_calendar", "add_calendar_users", "list_calendar_users", "remove_calendar_users", "add_event", "list_events", "update_event", "delete_event", "visualize_day", "find_free_slots", "reserve_slot", "sync_commands"]
+    commands = [
+        "help", "stats", "update_roles", "user_status", "set_preference", "get_preference", "remove_preference", "list_preferences", "clear_preferences", "update_calendar_email", "manage_user_role", "user_admin_info",
+        "create_reminder_template", "list_reminder_templates", "set_poll_reminder", "set_custom_reminder", "quick_poll_reminders", "list_my_reminders", "cancel_reminder", "reminder_logs",
+        "create_poll", "create_advanced_poll", "vote_poll", "poll_results", "list_polls", "delete_poll",
+        "create_role", "delete_role", "list_role_permissions", "add_role_permission", "remove_role_permission", "list_role_members", "add_user_to_role", "remove_user_from_role", "list_user_roles", "list_all_roles",
+        "calendar_help", "link_user_calendar", "create_shared_calendar", "add_calendar_users", "list_calendar_users", "remove_calendar_users", "add_event", "list_events", "update_event", "delete_event", "visualize_day", "find_free_slots", "reserve_slot",
+        "sync_commands"
+    ]
     return [app_commands.Choice(name=cmd, value=cmd) for cmd in commands if current.lower() in cmd.lower()]
 
 async def role_autocomplete(interaction: discord.Interaction, current: str):
@@ -48,22 +64,111 @@ def register_all_commands(bot):
     async def update_roles_slash(interaction: discord.Interaction, user: discord.Member, roles: str):
         await update_roles_command(interaction, user, roles)
 
-    @tree.command(name="update_preferences", description="Update your preferences")
+    # Enhanced User Management Commands
+    @tree.command(name="user_status", description="Check your current user status and preferences")
+    @app_commands.describe(user="User to check (admin only)")
+    async def user_status_slash(interaction: discord.Interaction, user: discord.Member = None):
+        await user_status_command(interaction, user)
+
+    @tree.command(name="set_preference", description="Set a preference value")
     @app_commands.describe(key="Preference key", value="Preference value")
-    async def update_preferences_slash(interaction: discord.Interaction, key: str, value: str):
-        await update_preferences_command(interaction, key, value)
+    async def set_preference_slash(interaction: discord.Interaction, key: str, value: str):
+        await set_preference_command(interaction, key, value)
 
-    @tree.command(name="add_user", description="Add a user with email")
-    @app_commands.describe(user="User to add", email="User's email")
-    async def add_user_slash(interaction: discord.Interaction, user: discord.Member, email: str):
-        await add_user_command(interaction, user, email)
+    @tree.command(name="get_preference", description="Get a preference value")
+    @app_commands.describe(key="Preference key")
+    async def get_preference_slash(interaction: discord.Interaction, key: str):
+        await get_preference_command(interaction, key)
 
+    @tree.command(name="remove_preference", description="Remove a preference")
+    @app_commands.describe(key="Preference key")
+    async def remove_preference_slash(interaction: discord.Interaction, key: str):
+        await remove_preference_command(interaction, key)
 
+    @tree.command(name="list_preferences", description="List all your preferences")
+    async def list_preferences_slash(interaction: discord.Interaction):
+        await list_preferences_command(interaction)
 
-    # Reminder command
-    @tree.command(name="remind", description="Set a reminder for yourself in 10 seconds")
-    async def remind_slash(interaction: discord.Interaction):
-        await remind_command(interaction)
+    @tree.command(name="clear_preferences", description="Clear all your preferences")
+    async def clear_preferences_slash(interaction: discord.Interaction):
+        await clear_preferences_command(interaction)
+
+    @tree.command(name="update_calendar_email", description="Update your calendar email")
+    @app_commands.describe(email="Your email address")
+    async def update_calendar_email_slash(interaction: discord.Interaction, email: str):
+        await update_calendar_email_command(interaction, email)
+
+    @tree.command(name="manage_user_role", description="Add or remove a role from a user (Admin only)")
+    @app_commands.describe(user="User to manage", role="Role name", action="Add or remove")
+    @app_commands.choices(action=[
+        app_commands.Choice(name="add", value="add"),
+        app_commands.Choice(name="remove", value="remove")
+    ])
+    async def manage_user_role_slash(interaction: discord.Interaction, user: discord.Member, role: str, action: app_commands.Choice[str] = "add"):
+        await manage_user_role_command(interaction, user, role, action.value if hasattr(action, 'value') else action)
+
+    @tree.command(name="user_admin_info", description="Get detailed user information (Admin only)")
+    @app_commands.describe(user="User to check")
+    async def user_admin_info_slash(interaction: discord.Interaction, user: discord.Member):
+        await user_admin_info_command(interaction, user)
+
+    # Reminder Template Commands
+    @tree.command(name="create_reminder_template", description="Create a new reminder template")
+    @app_commands.describe(name="Template name", message_template="Message template with {variables}", priority="Priority level", description="Template description", ping_roles="Role IDs to ping (comma-separated)", ping_users="User IDs to ping (comma-separated)")
+    @app_commands.choices(priority=[
+        app_commands.Choice(name="informational", value="informational"),
+        app_commands.Choice(name="urgent", value="urgent"),
+        app_commands.Choice(name="very_urgent", value="very_urgent"),
+        app_commands.Choice(name="critical", value="critical")
+    ])
+    async def create_reminder_template_slash(interaction: discord.Interaction, name: str, message_template: str, priority: app_commands.Choice[str] = "informational", description: str = "", ping_roles: str = "", ping_users: str = ""):
+        await create_reminder_template_command(interaction, name, message_template, priority.value if hasattr(priority, 'value') else priority, description or None, ping_roles or None, ping_users or None)
+
+    @tree.command(name="list_reminder_templates", description="List all available reminder templates")
+    @app_commands.describe(show_mine_only="Show only your templates")
+    async def list_reminder_templates_slash(interaction: discord.Interaction, show_mine_only: bool = False):
+        await list_reminder_templates_command(interaction, show_mine_only)
+
+    # Poll Reminder Commands
+    @tree.command(name="set_poll_reminder", description="Set a reminder for a poll")
+    @app_commands.describe(poll_id="Poll ID", template_name="Template name", reminder_type="Type of reminder", minutes_before="Minutes before expiry", interval_minutes="Minutes between reminders", max_occurrences="Max recurring reminders", specific_time="Specific time (YYYY-MM-DD HH:MM)")
+    @app_commands.choices(reminder_type=[
+        app_commands.Choice(name="time_before", value="time_before"),
+        app_commands.Choice(name="interval", value="interval"),
+        app_commands.Choice(name="specific_time", value="specific_time")
+    ])
+    async def set_poll_reminder_slash(interaction: discord.Interaction, poll_id: str, template_name: str, reminder_type: app_commands.Choice[str] = "time_before", minutes_before: int = None, interval_minutes: int = None, max_occurrences: int = None, specific_time: str = None):
+        await set_poll_reminder_command(interaction, poll_id, template_name, reminder_type.value if hasattr(reminder_type, 'value') else reminder_type, minutes_before, interval_minutes, max_occurrences, specific_time)
+
+    @tree.command(name="set_custom_reminder", description="Set a custom reminder")
+    @app_commands.describe(template_name="Template name", reminder_type="Type of reminder", interval_minutes="Minutes between reminders", max_occurrences="Max recurring reminders", specific_time="Specific time (YYYY-MM-DD HH:MM)", custom_data="Custom data (key=value,key2=value2)")
+    @app_commands.choices(reminder_type=[
+        app_commands.Choice(name="interval", value="interval"),
+        app_commands.Choice(name="specific_time", value="specific_time")
+    ])
+    async def set_custom_reminder_slash(interaction: discord.Interaction, template_name: str, reminder_type: app_commands.Choice[str] = "specific_time", interval_minutes: int = None, max_occurrences: int = None, specific_time: str = None, custom_data: str = None):
+        await set_custom_reminder_command(interaction, template_name, reminder_type.value if hasattr(reminder_type, 'value') else reminder_type, interval_minutes, max_occurrences, specific_time, custom_data)
+
+    @tree.command(name="quick_poll_reminders", description="Set up common poll reminders quickly")
+    @app_commands.describe(poll_id="Poll ID", template_name="Template name", remind_times="Minutes before expiry (comma-separated)")
+    async def quick_poll_reminders_slash(interaction: discord.Interaction, poll_id: str, template_name: str = "poll_reminder", remind_times: str = "60,30,10"):
+        await quick_poll_reminders_command(interaction, poll_id, template_name, remind_times)
+
+    # Reminder Management Commands
+    @tree.command(name="list_my_reminders", description="List your active reminders")
+    @app_commands.describe(show_inactive="Include inactive reminders")
+    async def list_my_reminders_slash(interaction: discord.Interaction, show_inactive: bool = False):
+        await list_my_reminders_command(interaction, show_inactive)
+
+    @tree.command(name="cancel_reminder", description="Cancel a specific reminder")
+    @app_commands.describe(reminder_id="Reminder ID")
+    async def cancel_reminder_slash(interaction: discord.Interaction, reminder_id: str):
+        await cancel_reminder_command(interaction, reminder_id)
+
+    @tree.command(name="reminder_logs", description="View execution logs for a reminder")
+    @app_commands.describe(reminder_id="Reminder ID")
+    async def reminder_logs_slash(interaction: discord.Interaction, reminder_id: str):
+        await reminder_logs_command(interaction, reminder_id)
 
     # Calendar Management Commands
     @tree.command(name="calendar_help", description="Show calendar setup instructions")

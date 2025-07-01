@@ -5,6 +5,7 @@ from services.calendar_service import CalendarService
 from services.calendar_manager import CalendarManager
 from services.rule_engine import RuleEngine
 from services.ai_planner_agent import AIPlannerAgent
+from services.reminder_manager import ReminderManager
 from db.user_manager import UserManager
 from utils.permission_manager import PermissionManager
 from utils.stats_module import StatsModule
@@ -20,6 +21,7 @@ class BotCore(discord.Client):
         self.permission_manager = PermissionManager()
         self.stats_module = StatsModule()
         self.reminder_scheduler = ReminderScheduler()
+        self.reminder_manager = ReminderManager(self, self.stats_module)
         # CalendarService is initialized per-user when needed (not globally)
         self.calendar_manager = CalendarManager()
         self.rule_engine = RuleEngine()
@@ -55,6 +57,9 @@ class BotCore(discord.Client):
 
         # Start the reminder scheduler after the event loop is running
         await self.reminder_scheduler.start()
+
+        # Start the reminder manager
+        await self.reminder_manager.start()
 
         # Start poll expiration checker
         self.loop.create_task(self.check_expired_polls())
