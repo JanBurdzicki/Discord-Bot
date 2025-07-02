@@ -36,6 +36,20 @@ async def help_command(interaction: discord.Interaction):
         inline=False
     )
 
+    # Reminder System
+    embed.add_field(
+        name="⏰ Reminder System",
+        value="• `/create_reminder_template <name> <message> [priority]` - Create reminder template\n• `/list_reminder_templates [show_mine_only]` - List available templates\n• `/set_poll_reminder <poll_id> <template> [type]` - Set poll reminder\n• `/set_custom_reminder <template> <type> [params]` - Set custom reminder\n• `/quick_poll_reminders <poll_id> [template] [times]` - Quick poll setup\n• `/list_reminders [show_inactive]` - List your reminders\n• `/cancel_reminder <reminder_id>` - Cancel a reminder\n• `/reminder_logs <reminder_id>` - View reminder execution logs",
+        inline=False
+    )
+
+    # User Management
+    embed.add_field(
+        name="👥 User Management",
+        value="• `/user_status [user]` - Check user status and preferences\n• `/set_preference <key> <value>` - Set a preference\n• `/get_preference <key>` - Get a preference value\n• `/remove_preference <key>` - Remove a preference\n• `/list_preferences` - List all your preferences\n• `/clear_preferences` - Clear all preferences\n• `/update_calendar_email <email>` - Update calendar email\n• `/manage_user_role <user> <role> <action>` - Manage user roles (Admin)\n• `/update_roles <user> <roles>` - Update user roles (Admin)",
+        inline=False
+    )
+
     # Role Management
     embed.add_field(
         name="🛡️ Role Management (Owner Only)",
@@ -43,17 +57,10 @@ async def help_command(interaction: discord.Interaction):
         inline=False
     )
 
-    # User Management
-    embed.add_field(
-        name="👥 User Management",
-        value="• `/add_user <user> <email>` - Add user with email\n• `/update_roles <user> <roles>` - Update user roles\n• `/update_preferences <key> <value>` - Update your preferences",
-        inline=False
-    )
-
     # Utilities
     embed.add_field(
         name="🔧 Utilities",
-        value="• `/remind` - Set a reminder for yourself\n• `/stats` - Show voting and poll statistics\n• `/help` - Show this help message",
+        value="• `/stats` - Show bot statistics\n• `/help` - Show this help message",
         inline=False
     )
 
@@ -67,7 +74,7 @@ async def help_command(interaction: discord.Interaction):
     # Usage Notes
     embed.add_field(
         name="📋 Usage Notes",
-        value="• Commands marked with **(Owner Only)** require server owner permissions\n• Date format: `YYYY-MM-DD HH:MM` (e.g., `2024-01-15 14:30`)\n• Use `/calendar_help` for detailed Google Calendar setup instructions\n• Multiple values: Use comma separation (e.g., `role1,role2,role3`)",
+        value="• Commands marked with **(Admin/Owner Only)** require special permissions\n• Date format: `YYYY-MM-DD HH:MM` (e.g., `2024-01-15 14:30`)\n• Use `/calendar_help` for detailed Google Calendar setup instructions\n• Multiple values: Use comma separation (e.g., `role1,role2,role3`)\n• Some advanced features may be under development",
         inline=False
     )
 
